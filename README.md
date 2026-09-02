@@ -1,5 +1,11 @@
 # Laravel Habbo Web API
 
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/habbofeelingnl/laravel-habbo-web-api.svg?style=flat-square)](https://packagist.org/packages/habbofeelingnl/laravel-habbo-web-api)
+[![Tests](https://img.shields.io/github/actions/workflow/status/HabboFeelingNL/laravel-habbo-web-api/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/HabboFeelingNL/laravel-habbo-web-api/actions/workflows/run-tests.yml)
+[![Total Downloads](https://img.shields.io/packagist/dt/habbofeelingnl/laravel-habbo-web-api.svg?style=flat-square)](https://packagist.org/packages/habbofeelingnl/laravel-habbo-web-api)
+[![PHP Version](https://img.shields.io/packagist/php-v/habbofeelingnl/laravel-habbo-web-api?style=flat-square)](https://packagist.org/packages/habbofeelingnl/laravel-habbo-web-api)
+[![License](https://img.shields.io/packagist/l/habbofeelingnl/laravel-habbo-web-api.svg?style=flat-square)](LICENSE.md)
+
 A Laravel client for the [public Habbo Web API](https://www.habbo.com/api/public/api-docs/).
 Every response is hydrated into a typed DTO, and each hotel is reachable on its
 own domain.
