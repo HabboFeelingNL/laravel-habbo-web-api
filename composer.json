@@ -1,0 +1,57 @@
+{
+    "name": "habbofeelingnl/laravel-habbo-web-api",
+    "description": "Laravel client for the public Habbo Web API, with typed DTOs and per-hotel domain routing.",
+    "keywords": [
+        "laravel",
+        "habbo",
+        "habbo-api",
+        "wired",
+        "api-client"
+    ],
+    "homepage": "https://github.com/HabboFeelingNL/laravel-habbo-web-api",
+    "license": "MIT",
+    "require": {
+        "php": "^8.1",
+        "illuminate/contracts": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/http": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/support": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "spatie/laravel-data": "^4.0",
+        "spatie/laravel-package-tools": "^1.16"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.13",
+        "orchestra/testbench": "^8.0 || ^9.0 || ^10.0",
+        "pestphp/pest": "^2.0 || ^3.0 || ^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "HabboFeeling\\HabboWebApi\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "HabboFeeling\\HabboWebApi\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "format": "vendor/bin/pint"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "HabboFeeling\\HabboWebApi\\HabboApiServiceProvider"
+            ],
+            "aliases": {
+                "Habbo": "HabboFeeling\\HabboWebApi\\Facades\\Habbo"
+            }
+        }
+    },
+    "prefer-stable": true
+}
