@@ -59,6 +59,12 @@ use Spatie\LaravelData\DataCollection;
  */
 class HabboApi
 {
+    /**
+     * Smallest in-game furni id that denotes a Builders Club item; BC ids sit in
+     * a high band offset by this constant (`0x7FFFFFFF - 0xFFFF`).
+     */
+    private const MIN_CLUB_FURNI_ID = 0x7FFFFFFF - 0xFFFF;
+
     private readonly string $domain;
 
     private readonly int $requestTimeout;
@@ -327,9 +333,20 @@ class HabboApi
     | header, writes in the X-Wired-Write-Key header; a rejected key raises a
     | HabboAuthException.
     |
-    | Rate guidance from the API maintainers: poll a single endpoint at most once
-    | every 0.5s, and keep sustained writes to at most once every 2s. This client
-    | does not throttle for you — pace calls from your own scheduler/queue.
+    | Rate limits from the API maintainers, applied per room over a 60s sustained
+    | window with a 10s burst allowance:
+    |
+    |   simple reads    300/min (burst 60)
+    |   list endpoints  120/min (burst 20)
+    |   profile reads   120/min (burst 20)
+    |   writes          120/min (burst 30)
+    |   bulk deletes     10/min (burst 5)
+    |   batch requests   30/min, plus a separate 500/min budget for batched writes
+    |
+    | The "/count" endpoints are cached server-side for 20s-600s depending on the
+    | size of the count. This client does not throttle or cache for you — pace
+    | calls from your own scheduler/queue, and cache profile/count reads yourself
+    | if you expose them to a lot of users.
     |--------------------------------------------------------------------------
     */
 
@@ -390,7 +407,9 @@ class HabboApi
     /**
      * List the stored values of a wired variable for one target kind.
      *
-     * @param  array{order_by?: string, order_dir?: string, page?: int, size?: int}  $query
+     * `page` is 1-based; `size` defaults to 50 and is capped at 100.
+     *
+     * @param  array{order_by?: 'value'|'creation_time'|'update_time', order_dir?: 'asc'|'desc', page?: int, size?: int}  $query
      */
     public function listRoomVariableValues(int $roomId, string $scope, string $variableName, string $targetKind, string $readKey, array $query = []): ?WiredPagedVariablesData
     {
@@ -663,6 +682,9 @@ class HabboApi
      * constant. `furni`, `users`, `pets` and `bots` ids are already clean and
      * pass through untouched. A `wall-items-bc` id is negated around its BC
      * offset (negate first, then remove the offset).
+     *
+     * If you only hold the raw in-game id and don't know its kind, use
+     * {@see self::furniId()} instead — it derives the kind from the number.
      */
     public static function apiEntityId(string $targetKind, int $inGameId): int
     {
@@ -673,10 +695,54 @@ class HabboApi
         }
 
         if (str_ends_with($targetKind, '-bc')) {
-            $id -= 0x7FFFFFFF - 0xFFFF;
+            $id -= self::MIN_CLUB_FURNI_ID;
         }
 
         return $id;
+    }
+
+    /**
+     * Split an in-game furni id into the API target kind and clean id.
+     *
+     * The game encodes the kind into the number: wall-item ids are negative, and
+     * Builders Club ids sit in a high band offset by a large constant. The API
+     * instead takes a `kind` path segment plus a small clean id — the
+     * `['kind' => ..., 'id' => ...]` pair returned here, ready to pass straight
+     * into the wired methods' `$targetKind` / `$entityId` arguments.
+     *
+     * 1:1 port of the API's reference `toFurniId()`.
+     *
+     * @return array{kind: 'furni'|'furni-bc'|'wall-items'|'wall-items-bc', id: int}
+     */
+    public static function furniId(int $inGameFurniId): array
+    {
+        $isWall = $inGameFurniId < 0;
+        $normalized = $isWall ? -$inGameFurniId : $inGameFurniId;
+
+        if ($normalized >= self::MIN_CLUB_FURNI_ID) {
+            return [
+                'kind' => $isWall ? 'wall-items-bc' : 'furni-bc',
+                'id' => $normalized - self::MIN_CLUB_FURNI_ID,
+            ];
+        }
+
+        return [
+            'kind' => $isWall ? 'wall-items' : 'furni',
+            'id' => $normalized,
+        ];
+    }
+
+    /**
+     * Rebuild the in-game furni id from an API target kind and clean id. The
+     * inverse of {@see self::furniId()} (the API's reference `fromFurniId()`).
+     */
+    public static function inGameFurniId(string $kind, int $id): int
+    {
+        $base = in_array($kind, ['furni-bc', 'wall-items-bc'], true)
+            ? $id + self::MIN_CLUB_FURNI_ID
+            : $id;
+
+        return in_array($kind, ['wall-items', 'wall-items-bc'], true) ? -$base : $base;
     }
 
     /*

@@ -142,20 +142,64 @@ HabboAPI::globalRoomVariable($roomId, 'jackpot', $readKey);
 HabboAPI::updateGlobalRoomVariable($roomId, 'jackpot', 500, $writeKey);
 
 // Paged values, counts, bulk delete, batch, profiles
-HabboAPI::listRoomVariableValues($roomId, 'user', 'score', 'users', $readKey, ['page' => 0, 'size' => 50]);
+HabboAPI::listRoomVariableValues($roomId, 'user', 'score', 'users', $readKey, ['page' => 1, 'size' => 50]);
 HabboAPI::countRoomVariableValues($roomId, 'user', 'score', 'users', $readKey);
 HabboAPI::batchRoomVariable($roomId, 'user', 'score', $requests, $writeKey);
 HabboAPI::userVariablesProfile($roomId, 'users', $entityId, $readKey);
 ```
 
+**64-bit values.** Wired variable values are signed 64-bit integers. PHP's native
+`int` is 64-bit on any 64-bit build and `json_decode()` keeps whole numbers up to
+`PHP_INT_MAX` (the same ceiling), so values round-trip losslessly with no bigint
+library — unlike JavaScript. 32-bit PHP builds (where large values overflow to
+float) are not supported.
+
+**Pagination.** `listRoomVariableValues()` takes `page` (1-based), `size`
+(default 50, max 100), `order_by` (`value` / `creation_time` / `update_time`) and
+`order_dir` (`asc` / `desc`).
+
+**Rate limits.** Applied by the API per room, over a 60s window with a 10s burst
+allowance: simple reads 300/min (burst 60), list endpoints and profile reads
+120/min (burst 20), writes 120/min (burst 30), bulk deletes 10/min (burst 5),
+batch requests 30/min plus a separate 500/min budget for batched writes. The
+`…/count` endpoints are cached server-side for 20s–600s by count size. This
+client neither throttles nor caches — pace your calls and cache profile/count
+reads yourself if you expose them widely.
+
 #### In-game vs API entity ids
 
-The API uses "clean" identifiers. In-game wall-item ids are negative and
-Builders Club ids are offset by a large constant. Convert before passing an
-`entityId`:
+The API uses "clean" identifiers. In-game wall-item ids are negative and Builders
+Club ids are offset by a large constant.
 
 ```php
+// If you already know the kind:
 $entityId = (string) HabboApi::apiEntityId('wall-items', $inGameId);
+
+// If you only have the raw in-game furni id, let the client work out the kind:
+['kind' => $kind, 'id' => $id] = HabboApi::furniId($inGameId);
+$score = HabboAPI::roomVariable($roomId, 'furni', 'score', $kind, (string) $id, $readKey);
+
+// …and back again:
+$inGameId = HabboApi::inGameFurniId($kind, $id);
+```
+
+#### Level-up add-on
+
+If the room runs the level-up add-on, `LevelUpper` turns a raw XP total into a
+level and progress. Pick the curve the add-on is configured with:
+
+```php
+use HabboFeeling\HabboWebApi\LevelUp\LevelUpper;
+
+$curve = LevelUpper::linear(stepSize: 100, maxLevel: 10);
+// or LevelUpper::interpolate([1 => 0, 5 => 1_000, 10 => 5_000]);
+// or LevelUpper::exponential(initialXp: 100, strength: 50, maxLevel: 10);
+
+$curve->currentLevel($xp);          // 1-based level
+$curve->progress($xp);              // xp into the current level
+$curve->progressPercentage($xp);    // 0-100
+$curve->xpRemaining($xp);           // xp left to the next level
+$curve->isMaxed($xp);               // bool
 ```
 
 ### Habbo Origins
@@ -188,6 +232,11 @@ decoded array.
 ```bash
 composer test
 ```
+
+## Other wrappers
+
+Community wrappers for the same beta API exist for other stacks (e.g. WiredSpast's,
+Ste's and Alynva's). This is the Laravel / PHP one.
 
 ## License
 

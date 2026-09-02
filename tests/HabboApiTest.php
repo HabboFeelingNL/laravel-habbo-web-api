@@ -341,6 +341,26 @@ it('attaches the room write key and value body when setting a wired variable', f
     });
 });
 
+it('hydrates wired variable values across the full signed 64-bit range', function (int $value) {
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => $value])]);
+
+    $variable = app(HabboApi::class)->roomVariable(42, 'user', 'score', 'users', '7', 'read-key');
+
+    expect($variable->value)->toBe($value);
+})->with([
+    'int64 max' => PHP_INT_MAX,
+    'large negative' => -9223372036854775807,
+]);
+
+it('sends a 64-bit wired variable value without losing precision', function () {
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => PHP_INT_MAX])]);
+
+    app(HabboApi::class)->setRoomVariable(42, 'user', 'score', 'users', '7', PHP_INT_MAX, 'write-key');
+
+    Http::assertSent(fn ($request) => $request['value'] === PHP_INT_MAX
+        && str_contains($request->body(), '9223372036854775807'));
+});
+
 it('reports a wired variable deletion as successful from a 204', function () {
     Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response('', 204)]);
 
@@ -362,6 +382,31 @@ it('converts in-game entity ids to their API form per target kind', function (st
     'bc furni de-offset' => ['furni-bc', 2147418112 + 42, 42],
     'bc wall item negated then de-offset' => ['wall-items-bc', -(2147418112 + 42), 42],
 ]);
+
+it('splits an in-game furni id into its API kind and clean id', function (int $inGame, string $kind, int $id) {
+    expect(HabboApi::furniId($inGame))->toBe(['kind' => $kind, 'id' => $id]);
+})->with([
+    'plain furni' => [12345, 'furni', 12345],
+    'zero is plain furni' => [0, 'furni', 0],
+    'wall item' => [-777, 'wall-items', 777],
+    'bc furni' => [2147418112 + 42, 'furni-bc', 42],
+    'bc wall item' => [-(2147418112 + 42), 'wall-items-bc', 42],
+]);
+
+it('round-trips an in-game furni id through furniId() and back', function (int $inGame) {
+    ['kind' => $kind, 'id' => $id] = HabboApi::furniId($inGame);
+
+    expect(HabboApi::inGameFurniId($kind, $id))->toBe($inGame);
+})->with([12345, 0, -777, 2147418112 + 42, -(2147418112 + 42)]);
+
+it('feeds furniId() output straight into a wired variable read', function () {
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => 1])]);
+
+    ['kind' => $kind, 'id' => $id] = HabboApi::furniId(-(2147418112 + 42));
+    app(HabboApi::class)->roomVariable(7, 'furni', 'score', $kind, (string) $id, 'read-key');
+
+    Http::assertSent(fn ($request) => $request->url() === 'https://www.habbo.com/api/public/rooms/7/variables/furni/score/wall-items-bc/42');
+});
 
 it('drops null lookup params when reading a user variables profile by name', function () {
     Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response([])]);
