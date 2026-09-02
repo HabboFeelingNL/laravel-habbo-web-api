@@ -714,7 +714,7 @@ class HabboApi
             ->acceptJson()
             ->timeout($this->requestTimeout);
 
-        return $ifNoneMatch === null ? $client : $client->withHeader('If-None-Match', $ifNoneMatch);
+        return $ifNoneMatch === null ? $client : $client->withHeaders(['If-None-Match' => $ifNoneMatch]);
     }
 
     private function wiredClient(?string $readKey = null, ?string $writeKey = null): PendingRequest
@@ -722,11 +722,11 @@ class HabboApi
         $client = $this->client();
 
         if ($readKey !== null) {
-            $client = $client->withHeader('X-Wired-Read-Key', $readKey);
+            $client = $client->withHeaders(['X-Wired-Read-Key' => $readKey]);
         }
 
         if ($writeKey !== null) {
-            $client = $client->withHeader('X-Wired-Write-Key', $writeKey);
+            $client = $client->withHeaders(['X-Wired-Write-Key' => $writeKey]);
         }
 
         return $client;
