@@ -2,7 +2,6 @@
 
 namespace HabboFeeling\HabboWebApi\Facades;
 
-use HabboFeeling\HabboWebApi\HabboApi;
 use Illuminate\Support\Facades\Facade;
 
 /**
@@ -54,12 +53,12 @@ use Illuminate\Support\Facades\Facade;
  * @method static array<int, string> originsHabboIds(string $uniquePlayerId)
  * @method static int apiEntityId(string $targetKind, int $inGameId)
  *
- * @see HabboApi
+ * @see \HabboFeeling\HabboWebApi\HabboApi
  */
-class Habbo extends Facade
+class HabboAPI extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return HabboApi::class;
+        return \HabboFeeling\HabboWebApi\HabboApi::class;
     }
 }

@@ -50,7 +50,7 @@
                 "HabboFeeling\\HabboWebApi\\HabboApiServiceProvider"
             ],
             "aliases": {
-                "Habbo": "HabboFeeling\\HabboWebApi\\Facades\\Habbo"
+                "HabboAPI": "HabboFeeling\\HabboWebApi\\Facades\\HabboAPI"
             }
         }
     },

@@ -6,7 +6,13 @@ use HabboFeeling\HabboWebApi\Data\MarketplaceStatsData;
 use HabboFeeling\HabboWebApi\Data\UserData;
 use HabboFeeling\HabboWebApi\Data\UserProfileData;
 use HabboFeeling\HabboWebApi\Data\Wired\WiredVariableData;
+use HabboFeeling\HabboWebApi\Exceptions\HabboAuthException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboConnectionException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboMaintenanceException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboRateLimitException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboRequestException;
 use HabboFeeling\HabboWebApi\HabboApi;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Spatie\LaravelData\DataCollection;
 
@@ -41,6 +47,13 @@ it('talks to another hotel through hotel() without mutating the original instanc
 
     Http::assertSent(fn ($request) => $request->url() === 'https://www.habbo.com.br/api/public/achievements');
     Http::assertSent(fn ($request) => $request->url() === 'https://www.habbo.com/api/public/achievements');
+});
+
+it('resolves the HabboAPI facade to the container singleton', function () {
+    Http::fake(['www.habbo.com/api/public/*' => Http::response(['error' => 'not-found'], 404)]);
+
+    expect(HabboFeeling\HabboWebApi\Facades\HabboAPI::domain())->toBe('www.habbo.com')
+        ->and(HabboFeeling\HabboWebApi\Facades\HabboAPI::group('x'))->toBeNull();
 });
 
 it('accepts any Stringable as the hotel in hotel()', function () {
@@ -131,6 +144,63 @@ it('returns an empty DataCollection for a list endpoint error', function () {
 
     expect($friends)->toBeInstanceOf(DataCollection::class)
         ->and($friends)->toHaveCount(0);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Failure handling
+|--------------------------------------------------------------------------
+*/
+
+it('throws HabboMaintenanceException on a maintenance envelope', function () {
+    Http::fake(['www.habbo.com/api/public/*' => Http::response(['error' => 'maintenance'], 503)]);
+
+    app(HabboApi::class)->user('hhus-1');
+})->throws(HabboMaintenanceException::class, 'The Habbo hotel is in maintenance.');
+
+it('throws HabboRequestException carrying the response on a 500', function () {
+    Http::fake(['www.habbo.com/api/public/*' => Http::response('boom', 500)]);
+
+    try {
+        app(HabboApi::class)->group('g-1');
+        expect()->fail('expected HabboRequestException');
+    } catch (HabboRequestException $e) {
+        expect($e->status())->toBe(500)
+            ->and($e->response->body())->toBe('boom');
+    }
+});
+
+it('throws HabboAuthException when a wired key is rejected', function () {
+    Http::fake(['www.habbo.com/api/public/*' => Http::response(['error' => 'forbidden'], 403)]);
+
+    app(HabboApi::class)->roomVariable(42, 'user', 'score', 'users', '7', 'bad-key');
+})->throws(HabboAuthException::class);
+
+it('throws HabboRateLimitException with the Retry-After hint on a 429', function () {
+    Http::fake(['www.habbo.com/api/public/*' => Http::response('', 429, ['Retry-After' => '2'])]);
+
+    try {
+        app(HabboApi::class)->achievements();
+        expect()->fail('expected HabboRateLimitException');
+    } catch (HabboRateLimitException $e) {
+        expect($e->retryAfter())->toBe(2);
+    }
+});
+
+it('wraps a connection failure in HabboConnectionException', function () {
+    Http::fake(fn () => throw new ConnectionException('cURL error 28: timed out'));
+
+    app(HabboApi::class)->user('hhus-1');
+})->throws(HabboConnectionException::class);
+
+it('still returns null on a plain 404 and false on a failed delete', function () {
+    Http::fake([
+        'www.habbo.com/api/public/groups/*' => Http::response('', 404),
+        'www.habbo.com/api/public/rooms/*' => Http::response('', 404),
+    ]);
+
+    expect(app(HabboApi::class)->group('missing'))->toBeNull()
+        ->and(app(HabboApi::class)->deleteRoomVariable(42, 'user', 'score', 'users', '7', 'k'))->toBeFalse();
 });
 
 it('hydrates the nested collections of a user profile', function () {

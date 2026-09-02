@@ -2,6 +2,7 @@
 
 namespace HabboFeeling\HabboWebApi;
 
+use Closure;
 use HabboFeeling\HabboWebApi\Data\AchievementData;
 use HabboFeeling\HabboWebApi\Data\BadgeData;
 use HabboFeeling\HabboWebApi\Data\BadgeOwnersData;
@@ -23,6 +24,13 @@ use HabboFeeling\HabboWebApi\Data\Wired\WiredPagedVariablesData;
 use HabboFeeling\HabboWebApi\Data\Wired\WiredRoomVariablesData;
 use HabboFeeling\HabboWebApi\Data\Wired\WiredVariableData;
 use HabboFeeling\HabboWebApi\Data\Wired\WiredVariablesProfileData;
+use HabboFeeling\HabboWebApi\Exceptions\HabboApiException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboAuthException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboConnectionException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboMaintenanceException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboRateLimitException;
+use HabboFeeling\HabboWebApi\Exceptions\HabboRequestException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -37,9 +45,17 @@ use Spatie\LaravelData\DataCollection;
  * derby, skills, player-id mapping) are prefixed `origins*`.
  *
  * Every response is hydrated into a `HabboFeeling\HabboWebApi\Data` DTO.
- * Single-resource reads return `null` when the resource is missing (HTTP 404)
- * or the hotel answered with an error/maintenance envelope; list reads return
- * an empty {@see DataCollection}. `204 No Content` writes return a bool.
+ *
+ * Failure handling:
+ *  - a genuinely missing resource (HTTP 404 / `{"error":"not-found"}`) and an
+ *    unchanged conditional read (HTTP 304) stay lenient: single reads return
+ *    `null`, list reads an empty {@see DataCollection}, `bool` writes `false`;
+ *  - anything else raises a
+ *    {@see HabboApiException} —
+ *    {@see HabboMaintenanceException} for `{"error":"maintenance"}`,
+ *    {@see HabboAuthException} for 401/403 (wired key), {@see HabboRateLimitException}
+ *    for 429, {@see HabboRequestException} for other non-2xx, and
+ *    {@see HabboConnectionException} when the request never reached the hotel.
  */
 class HabboApi
 {
@@ -76,11 +92,16 @@ class HabboApi
     */
 
     /**
-     * Whether the hotel API answers the ping endpoint.
+     * Whether the hotel API answers the ping endpoint. Never throws — a
+     * connection failure is reported as `false`.
      */
     public function ping(): bool
     {
-        return $this->client()->get('/ping')->successful();
+        try {
+            return $this->client()->get('/ping')->successful();
+        } catch (ConnectionException) {
+            return false;
+        }
     }
 
     /**
@@ -92,7 +113,7 @@ class HabboApi
      */
     public function get(string $path, array $query = []): array
     {
-        return $this->client()->get($this->normalizePath($path), $query)->json() ?? [];
+        return $this->send(fn () => $this->client()->get($this->normalizePath($path), $query))->json() ?? [];
     }
 
     /*
@@ -108,7 +129,7 @@ class HabboApi
      */
     public function achievements(): DataCollection
     {
-        return AchievementData::collect($this->listPayload($this->client()->get('/achievements')), DataCollection::class);
+        return AchievementData::collect($this->listPayload(fn () => $this->client()->get('/achievements')), DataCollection::class);
     }
 
     /**
@@ -118,7 +139,7 @@ class HabboApi
      */
     public function userAchievements(string $userId): DataCollection
     {
-        return AchievementData::collect($this->listPayload($this->client()->get("/achievements/{$userId}")), DataCollection::class);
+        return AchievementData::collect($this->listPayload(fn () => $this->client()->get("/achievements/{$userId}")), DataCollection::class);
     }
 
     /*
@@ -132,7 +153,7 @@ class HabboApi
      */
     public function badgeOwners(string $badgeCode): ?BadgeOwnersData
     {
-        return $this->object($this->client()->get("/badge/owners/{$badgeCode}"), BadgeOwnersData::class);
+        return $this->object(fn () => $this->client()->get("/badge/owners/{$badgeCode}"), BadgeOwnersData::class);
     }
 
     /*
@@ -146,7 +167,7 @@ class HabboApi
      */
     public function group(string $id): ?GroupData
     {
-        return $this->object($this->client()->get("/groups/{$id}"), GroupData::class);
+        return $this->object(fn () => $this->client()->get("/groups/{$id}"), GroupData::class);
     }
 
     /**
@@ -156,7 +177,7 @@ class HabboApi
      */
     public function groupMembers(string $id): DataCollection
     {
-        return GroupMemberData::collect($this->listPayload($this->client()->get("/groups/{$id}/members")), DataCollection::class);
+        return GroupMemberData::collect($this->listPayload(fn () => $this->client()->get("/groups/{$id}/members")), DataCollection::class);
     }
 
     /*
@@ -174,12 +195,10 @@ class HabboApi
      */
     public function marketplaceStats(array $roomItems = [], array $wallItems = []): MarketplaceStatsData
     {
-        $response = $this->client()->post('/marketplace/stats/batch', [
+        return MarketplaceStatsData::from($this->payload(fn () => $this->client()->post('/marketplace/stats/batch', [
             'roomItems' => $this->itemList($roomItems),
             'wallItems' => $this->itemList($wallItems),
-        ]);
-
-        return MarketplaceStatsData::from($this->payload($response) ?? []);
+        ])) ?? []);
     }
 
     /*
@@ -193,7 +212,7 @@ class HabboApi
      */
     public function room(int $roomId): ?RoomData
     {
-        return $this->object($this->client()->get("/rooms/{$roomId}"), RoomData::class);
+        return $this->object(fn () => $this->client()->get("/rooms/{$roomId}"), RoomData::class);
     }
 
     /*
@@ -210,7 +229,9 @@ class HabboApi
      */
     public function hotLooks(): DataCollection
     {
-        $xml = @simplexml_load_string($this->client()->get('/lists/hotlooks')->body() ?: '<habbos/>');
+        $body = $this->send(fn () => $this->client()->get('/lists/hotlooks'))->body();
+
+        $xml = @simplexml_load_string($body ?: '<habbos/>');
 
         $looks = [];
 
@@ -237,7 +258,7 @@ class HabboApi
      */
     public function userByName(string $name, ?string $ifNoneMatch = null): ?UserData
     {
-        return $this->object($this->client($ifNoneMatch)->get('/users', ['name' => $name]), UserData::class);
+        return $this->object(fn () => $this->client($ifNoneMatch)->get('/users', ['name' => $name]), UserData::class);
     }
 
     /**
@@ -245,7 +266,7 @@ class HabboApi
      */
     public function user(string $id, ?string $ifNoneMatch = null): ?UserData
     {
-        return $this->object($this->client($ifNoneMatch)->get("/users/{$id}"), UserData::class);
+        return $this->object(fn () => $this->client($ifNoneMatch)->get("/users/{$id}"), UserData::class);
     }
 
     /**
@@ -255,7 +276,7 @@ class HabboApi
      */
     public function userFriends(string $id): DataCollection
     {
-        return FriendData::collect($this->listPayload($this->client()->get("/users/{$id}/friends")), DataCollection::class);
+        return FriendData::collect($this->listPayload(fn () => $this->client()->get("/users/{$id}/friends")), DataCollection::class);
     }
 
     /**
@@ -265,7 +286,7 @@ class HabboApi
      */
     public function userGroups(string $id): DataCollection
     {
-        return UserGroupData::collect($this->listPayload($this->client()->get("/users/{$id}/groups")), DataCollection::class);
+        return UserGroupData::collect($this->listPayload(fn () => $this->client()->get("/users/{$id}/groups")), DataCollection::class);
     }
 
     /**
@@ -275,7 +296,7 @@ class HabboApi
      */
     public function userRooms(string $id): DataCollection
     {
-        return RoomData::collect($this->listPayload($this->client()->get("/users/{$id}/rooms")), DataCollection::class);
+        return RoomData::collect($this->listPayload(fn () => $this->client()->get("/users/{$id}/rooms")), DataCollection::class);
     }
 
     /**
@@ -285,7 +306,7 @@ class HabboApi
      */
     public function userBadges(string $id): DataCollection
     {
-        return BadgeData::collect($this->listPayload($this->client()->get("/users/{$id}/badges")), DataCollection::class);
+        return BadgeData::collect($this->listPayload(fn () => $this->client()->get("/users/{$id}/badges")), DataCollection::class);
     }
 
     /**
@@ -293,7 +314,7 @@ class HabboApi
      */
     public function userProfile(string $id): ?UserProfileData
     {
-        return $this->object($this->client()->get("/users/{$id}/profile"), UserProfileData::class);
+        return $this->object(fn () => $this->client()->get("/users/{$id}/profile"), UserProfileData::class);
     }
 
     /*
@@ -303,7 +324,8 @@ class HabboApi
     | Room-scoped endpoints guarded by a read key and a write key. Both come from
     | a "Variable Global Add-on: Web API" furni placed in the room (currently
     | handed out to beta testers only). Reads send the key in the X-Wired-Read-Key
-    | header, writes in the X-Wired-Write-Key header.
+    | header, writes in the X-Wired-Write-Key header; a rejected key raises a
+    | HabboAuthException.
     |
     | Rate guidance from the API maintainers: poll a single endpoint at most once
     | every 0.5s, and keep sustained writes to at most once every 2s. This client
@@ -317,7 +339,7 @@ class HabboApi
     public function roomVariables(int $roomId, string $readKey): ?WiredRoomVariablesData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables"),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables"),
             WiredRoomVariablesData::class,
         );
     }
@@ -328,7 +350,7 @@ class HabboApi
     public function roomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, string $readKey): ?WiredVariableData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId)),
+            fn () => $this->wiredClient(readKey: $readKey)->get($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId)),
             WiredVariableData::class,
         );
     }
@@ -339,7 +361,7 @@ class HabboApi
     public function setRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, int $value, string $writeKey): ?WiredVariableData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->put($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $value]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->put($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $value]),
             WiredVariableData::class,
         );
     }
@@ -350,18 +372,19 @@ class HabboApi
     public function updateRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, int $value, string $writeKey): ?WiredVariableData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->patch($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $value]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $value]),
             WiredVariableData::class,
         );
     }
 
     /**
-     * Delete one stored user or furni wired variable value.
+     * Delete one stored user or furni wired variable value. `true` on success,
+     * `false` when the value did not exist (HTTP 404).
      */
     public function deleteRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, string $writeKey): bool
     {
-        return $this->wiredClient(writeKey: $writeKey)
-            ->delete($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId))->successful();
+        return $this->send(fn () => $this->wiredClient(writeKey: $writeKey)
+            ->delete($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId)))->successful();
     }
 
     /**
@@ -372,7 +395,7 @@ class HabboApi
     public function listRoomVariableValues(int $roomId, string $scope, string $variableName, string $targetKind, string $readKey, array $query = []): ?WiredPagedVariablesData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables/{$scope}/{$variableName}/{$targetKind}", $query),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables/{$scope}/{$variableName}/{$targetKind}", $query),
             WiredPagedVariablesData::class,
         );
     }
@@ -383,7 +406,7 @@ class HabboApi
     public function countRoomVariableValues(int $roomId, string $scope, string $variableName, string $targetKind, string $readKey): ?WiredCountData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables/{$scope}/{$variableName}/{$targetKind}/count"),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables/{$scope}/{$variableName}/{$targetKind}/count"),
             WiredCountData::class,
         );
     }
@@ -395,8 +418,8 @@ class HabboApi
      */
     public function bulkDeleteRoomVariables(int $roomId, array $variableNames, string $writeKey): bool
     {
-        return $this->wiredClient(writeKey: $writeKey)
-            ->post("/rooms/{$roomId}/variables/bulk-delete", ['variables' => array_values($variableNames)])->successful();
+        return $this->send(fn () => $this->wiredClient(writeKey: $writeKey)
+            ->post("/rooms/{$roomId}/variables/bulk-delete", ['variables' => array_values($variableNames)]))->successful();
     }
 
     /**
@@ -407,7 +430,7 @@ class HabboApi
     public function batchRoomVariable(int $roomId, string $scope, string $variableName, array $requests, string $writeKey): ?WiredBatchResultsData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->post("/rooms/{$roomId}/variables/{$scope}/{$variableName}/batch", ['requests' => array_values($requests)]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->post("/rooms/{$roomId}/variables/{$scope}/{$variableName}/batch", ['requests' => array_values($requests)]),
             WiredBatchResultsData::class,
         );
     }
@@ -418,7 +441,7 @@ class HabboApi
     public function globalRoomVariable(int $roomId, string $variableName, string $readKey): ?WiredVariableData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables/global/{$variableName}"),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables/global/{$variableName}"),
             WiredVariableData::class,
         );
     }
@@ -429,7 +452,7 @@ class HabboApi
     public function updateGlobalRoomVariable(int $roomId, string $variableName, int $value, string $writeKey): ?WiredVariableData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables/global/{$variableName}", ['value' => $value]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables/global/{$variableName}", ['value' => $value]),
             WiredVariableData::class,
         );
     }
@@ -446,7 +469,7 @@ class HabboApi
     public function userVariablesProfileByName(int $roomId, string $readKey, ?string $name = null, ?string $uniqueId = null): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/user/users", array_filter([
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/user/users", array_filter([
                 'name' => $name,
                 'unique_id' => $uniqueId,
             ], fn ($value) => $value !== null)),
@@ -460,7 +483,7 @@ class HabboApi
     public function userVariablesProfile(int $roomId, string $targetKind, string $entityId, string $readKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}"),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}"),
             WiredVariablesProfileData::class,
         );
     }
@@ -473,7 +496,7 @@ class HabboApi
     public function patchUserVariablesProfile(int $roomId, string $targetKind, string $entityId, array $variables, string $writeKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}", ['variables' => $variables]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}", ['variables' => $variables]),
             WiredVariablesProfileData::class,
         );
     }
@@ -483,8 +506,8 @@ class HabboApi
      */
     public function deleteUserVariablesProfile(int $roomId, string $targetKind, string $entityId, string $writeKey): bool
     {
-        return $this->wiredClient(writeKey: $writeKey)
-            ->delete("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}")->successful();
+        return $this->send(fn () => $this->wiredClient(writeKey: $writeKey)
+            ->delete("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}"))->successful();
     }
 
     /**
@@ -493,7 +516,7 @@ class HabboApi
     public function furniVariablesProfile(int $roomId, string $targetKind, string $entityId, string $readKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/furni/{$targetKind}/{$entityId}"),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/furni/{$targetKind}/{$entityId}"),
             WiredVariablesProfileData::class,
         );
     }
@@ -506,7 +529,7 @@ class HabboApi
     public function patchFurniVariablesProfile(int $roomId, string $targetKind, string $entityId, array $variables, string $writeKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/furni/{$targetKind}/{$entityId}", ['variables' => $variables]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/furni/{$targetKind}/{$entityId}", ['variables' => $variables]),
             WiredVariablesProfileData::class,
         );
     }
@@ -517,7 +540,7 @@ class HabboApi
     public function globalVariablesProfile(int $roomId, string $readKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/global"),
+            fn () => $this->wiredClient(readKey: $readKey)->get("/rooms/{$roomId}/variables_profile/global"),
             WiredVariablesProfileData::class,
         );
     }
@@ -530,7 +553,7 @@ class HabboApi
     public function patchGlobalVariablesProfile(int $roomId, array $variables, string $writeKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/global", ['variables' => $variables]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/global", ['variables' => $variables]),
             WiredVariablesProfileData::class,
         );
     }
@@ -554,7 +577,7 @@ class HabboApi
      */
     public function originsMatchIds(string $uniquePlayerId, array $query = []): array
     {
-        return $this->listPayload($this->client()->get("/matches/v1/{$uniquePlayerId}/ids", $query));
+        return $this->listPayload(fn () => $this->client()->get("/matches/v1/{$uniquePlayerId}/ids", $query));
     }
 
     /**
@@ -562,7 +585,7 @@ class HabboApi
      */
     public function originsMatch(string $uniqueMatchId): ?OriginsMatchData
     {
-        return $this->object($this->client()->get("/matches/v1/{$uniqueMatchId}"), OriginsMatchData::class);
+        return $this->object(fn () => $this->client()->get("/matches/v1/{$uniqueMatchId}"), OriginsMatchData::class);
     }
 
     /**
@@ -573,7 +596,7 @@ class HabboApi
      */
     public function originsDerbyIds(string $uniquePlayerId, array $query = []): array
     {
-        return $this->listPayload($this->client()->get("/minigame/derby/v1/{$uniquePlayerId}/ids", $query));
+        return $this->listPayload(fn () => $this->client()->get("/minigame/derby/v1/{$uniquePlayerId}/ids", $query));
     }
 
     /**
@@ -585,7 +608,7 @@ class HabboApi
      */
     public function originsDerby(string $uniqueDerbyId, array $query = []): array
     {
-        return $this->payload($this->client()->get("/minigame/derby/v1/{$uniqueDerbyId}", $query)) ?? [];
+        return $this->payload(fn () => $this->client()->get("/minigame/derby/v1/{$uniqueDerbyId}", $query)) ?? [];
     }
 
     /**
@@ -597,7 +620,7 @@ class HabboApi
      */
     public function originsDerbyStatus(array $query = []): array
     {
-        return $this->payload($this->client()->get('/minigame/derby/v1/status', $query)) ?? [];
+        return $this->payload(fn () => $this->client()->get('/minigame/derby/v1/status', $query)) ?? [];
     }
 
     /**
@@ -606,7 +629,7 @@ class HabboApi
     public function originsSkill(string $uniquePlayerId, string $skillType = 'FISHING'): ?OriginsSkillData
     {
         return $this->object(
-            $this->client()->get("/skills/{$uniquePlayerId}", ['skillType' => $skillType]),
+            fn () => $this->client()->get("/skills/{$uniquePlayerId}", ['skillType' => $skillType]),
             OriginsSkillData::class,
         );
     }
@@ -617,7 +640,7 @@ class HabboApi
     public function originsSkillLeaderboard(string $skillType = 'FISHING', int $page = 1): ?OriginsSkillLeaderboardData
     {
         return $this->object(
-            $this->client()->get('/skills/leaderboard', ['skillType' => $skillType, 'page' => $page]),
+            fn () => $this->client()->get('/skills/leaderboard', ['skillType' => $skillType, 'page' => $page]),
             OriginsSkillLeaderboardData::class,
         );
     }
@@ -629,7 +652,7 @@ class HabboApi
      */
     public function originsHabboIds(string $uniquePlayerId): array
     {
-        return $this->listPayload($this->client()->get("/users/by-playerId/{$uniquePlayerId}"));
+        return $this->listPayload(fn () => $this->client()->get("/users/by-playerId/{$uniquePlayerId}"));
     }
 
     /**
@@ -663,30 +686,31 @@ class HabboApi
     */
 
     /**
-     * Hydrate a single DTO from a response, or null when the body is absent or
-     * an error/maintenance envelope.
+     * Hydrate a single DTO from a response, or null for a missing resource.
      *
      * @template TData of \Spatie\LaravelData\Data
      *
+     * @param  Closure(): Response  $request
      * @param  class-string<TData>  $data
      * @return TData|null
      */
-    private function object(Response $response, string $data): ?object
+    private function object(Closure $request, string $data): ?object
     {
-        $payload = $this->payload($response);
+        $payload = $this->payload($request);
 
         return $payload === null ? null : $data::from($payload);
     }
 
     /**
-     * The decoded body as an array, or null when it is missing or an
-     * `{"error": ...}` envelope (404, maintenance, wired key rejection).
+     * The decoded body as an array, or null for a missing resource (HTTP 404 /
+     * `not-found`) or an unchanged conditional read (HTTP 304).
      *
+     * @param  Closure(): Response  $request
      * @return array<string, mixed>|null
      */
-    private function payload(Response $response): ?array
+    private function payload(Closure $request): ?array
     {
-        $json = $response->json();
+        $json = $this->send($request)->json();
 
         if (! is_array($json) || array_key_exists('error', $json)) {
             return null;
@@ -696,16 +720,54 @@ class HabboApi
     }
 
     /**
-     * The decoded body as a list, or an empty array when it is missing or an
-     * error envelope.
+     * The decoded body as a list, or an empty array for a missing resource.
      *
+     * @param  Closure(): Response  $request
      * @return array<int, mixed>
      */
-    private function listPayload(Response $response): array
+    private function listPayload(Closure $request): array
     {
-        $json = $response->json();
+        $json = $this->send($request)->json();
 
         return is_array($json) && ! array_key_exists('error', $json) ? array_values($json) : [];
+    }
+
+    /**
+     * Run the request, translating transport and HTTP failures into a
+     * {@see HabboApiException}. A missing
+     * resource (404 / not-found) and an unchanged conditional read (304) are
+     * returned untouched for the caller to treat as "no data".
+     *
+     * @param  Closure(): Response  $request
+     */
+    private function send(Closure $request): Response
+    {
+        try {
+            $response = $request();
+        } catch (ConnectionException $e) {
+            throw new HabboConnectionException($e->getMessage(), 0, $e);
+        }
+
+        $json = $response->json();
+        $error = is_array($json) ? ($json['error'] ?? null) : null;
+
+        if ($error === 'maintenance') {
+            throw new HabboMaintenanceException($response);
+        }
+
+        if ($response->successful() || $response->status() === 304) {
+            return $response;
+        }
+
+        if ($response->status() === 404 || $error === 'not-found') {
+            return $response;
+        }
+
+        throw match (true) {
+            $response->status() === 429 => new HabboRateLimitException($response),
+            in_array($response->status(), [401, 403], true) => new HabboAuthException($response),
+            default => new HabboRequestException($response),
+        };
     }
 
     private function client(?string $ifNoneMatch = null): PendingRequest
