@@ -233,6 +233,18 @@ decoded array.
 composer test
 ```
 
+## Laravel Boost
+
+This package ships [Laravel Boost](https://laravel.com/docs/boost) resources, so if your
+project uses Boost your AI agent gets guidance for this client automatically. Run
+`php artisan boost:install` (or `php artisan boost:update`) after installing:
+
+- a **core guideline** (`resources/boost/guidelines/core.blade.php`) — loaded upfront, the
+  entry points, return contract and error model;
+- the **`habbo-web-api-development` skill** (`resources/boost/skills/habbo-web-api-development/`) —
+  loaded on demand, with the full method surface, Wired Variables, entity-id conversion,
+  level-up curves and Origins.
+
 ## Other wrappers
 
 Community wrappers for the same beta API exist for other stacks (e.g. WiredSpast's,

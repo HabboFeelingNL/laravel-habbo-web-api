@@ -4,6 +4,12 @@ All notable changes to `laravel-habbo-web-api` will be documented in this file.
 
 ## Unreleased
 
+## 1.0.2 - 2026-09-02
+
+- Laravel Boost support: ships `resources/boost/guidelines/core.blade.php` and a
+  `habbo-web-api-development` agent skill so consuming projects that run
+  `php artisan boost:install` get AI guidance for using this client.
+
 ## 1.0.1 - 2026-09-02
 
 - `HabboApi::furniId()` / `HabboApi::inGameFurniId()` to split an in-game furni
