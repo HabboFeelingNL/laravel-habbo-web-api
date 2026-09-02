@@ -37,8 +37,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Older Laravel patch releases carry advisories in subsystems this
+          # package does not use; Composer 2.10+ blocks them during resolution.
+          composer config --global policy.advisories.block false
           composer require "laravel/framework:${{ matrix.laravel }}" --no-interaction --no-update
-          composer update --${{ matrix.stability }} --prefer-dist --no-interaction
+          composer update --${{ matrix.stability }} --prefer-dist --no-interaction --no-audit
 
       - name: Run tests
         run: vendor/bin/pest
