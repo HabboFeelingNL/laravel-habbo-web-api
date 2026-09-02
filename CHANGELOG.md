@@ -4,6 +4,8 @@ All notable changes to `laravel-habbo-web-api` will be documented in this file.
 
 ## Unreleased
 
+## 1.0.1 - 2026-09-02
+
 - `HabboApi::furniId()` / `HabboApi::inGameFurniId()` to split an in-game furni
   id into the API `{kind, id}` pair and back, auto-detecting the wall-item and
   Builders Club encoding (a port of the API's reference `toFurniId`/`fromFurniId`).
@@ -12,6 +14,9 @@ All notable changes to `laravel-habbo-web-api` will be documented in this file.
   the maintainers' reference `level-upper.ts`).
 - Documented that Wired variable values are signed 64-bit integers and round-trip
   losslessly on 64-bit PHP.
+- Documented the per-room Wired rate limits and `…/count` server-side caching,
+  and corrected `listRoomVariableValues()` pagination (`page` is 1-based, `size`
+  defaults to 50 / max 100).
 
 ## 1.0.0 - 2026-09-02
 
