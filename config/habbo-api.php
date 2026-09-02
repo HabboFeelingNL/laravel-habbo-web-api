@@ -17,10 +17,15 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Request timeout (seconds)
+    | HTTP request timeout (seconds)
     |--------------------------------------------------------------------------
+    |
+    | How long a single request may wait for a hotel to respond before the
+    | client throws a ConnectionException. This is not a rate limit — it does
+    | not control how often you may call the API.
+    |
     */
 
-    'timeout' => (int) env('HABBO_API_TIMEOUT', 15),
+    'request_timeout' => (int) env('HABBO_API_REQUEST_TIMEOUT', 15),
 
 ];

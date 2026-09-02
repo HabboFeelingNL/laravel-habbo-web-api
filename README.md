@@ -29,7 +29,7 @@ php artisan vendor:publish --tag="habbo-web-api-config"
 
 ```env
 HABBO_API_DOMAIN=www.habbo.com
-HABBO_API_TIMEOUT=15
+HABBO_API_REQUEST_TIMEOUT=15
 ```
 
 ## Usage

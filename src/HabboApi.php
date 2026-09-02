@@ -45,12 +45,12 @@ class HabboApi
 {
     private readonly string $domain;
 
-    private readonly int $timeout;
+    private readonly int $requestTimeout;
 
-    public function __construct(?string $domain = null, ?int $timeout = null)
+    public function __construct(?string $domain = null, ?int $requestTimeout = null)
     {
         $this->domain = $this->normalizeDomain($domain ?? config('habbo-api.domain'));
-        $this->timeout = $timeout ?? (int) config('habbo-api.timeout', 15);
+        $this->requestTimeout = $requestTimeout ?? (int) config('habbo-api.request_timeout', 15);
     }
 
     /**
@@ -58,7 +58,7 @@ class HabboApi
      */
     public function hotel(string|\Stringable $hotel): self
     {
-        return new self((string) $hotel, $this->timeout);
+        return new self((string) $hotel, $this->requestTimeout);
     }
 
     /**
@@ -304,6 +304,10 @@ class HabboApi
     | a "Variable Global Add-on: Web API" furni placed in the room (currently
     | handed out to beta testers only). Reads send the key in the X-Wired-Read-Key
     | header, writes in the X-Wired-Write-Key header.
+    |
+    | Rate guidance from the API maintainers: poll a single endpoint at most once
+    | every 0.5s, and keep sustained writes to at most once every 2s. This client
+    | does not throttle for you — pace calls from your own scheduler/queue.
     |--------------------------------------------------------------------------
     */
 
@@ -708,7 +712,7 @@ class HabboApi
     {
         $client = Http::baseUrl("https://{$this->domain}/api/public")
             ->acceptJson()
-            ->timeout($this->timeout);
+            ->timeout($this->requestTimeout);
 
         return $ifNoneMatch === null ? $client : $client->withHeader('If-None-Match', $ifNoneMatch);
     }

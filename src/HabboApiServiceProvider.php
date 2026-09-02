@@ -18,7 +18,7 @@ class HabboApiServiceProvider extends PackageServiceProvider
     {
         $this->app->singleton(HabboApi::class, fn () => new HabboApi(
             config('habbo-api.domain'),
-            config('habbo-api.timeout'),
+            config('habbo-api.request_timeout'),
         ));
 
         $this->app->alias(HabboApi::class, 'habbo-api');
