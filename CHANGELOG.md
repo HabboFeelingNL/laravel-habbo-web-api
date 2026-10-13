@@ -4,6 +4,23 @@ All notable changes to `laravel-habbo-web-api` will be documented in this file.
 
 ## Unreleased
 
+## 2.0.0 - unreleased
+
+**Breaking:** aligns Wired Variables with the updated API docs, which now encode
+values as signed 64-bit integers in decimal strings.
+
+- `WiredVariableData::$value` is now a `string` (legacy numeric responses are
+  still accepted and normalised to strings). This also applies to profile
+  `variables` and batch result bodies.
+- `setRoomVariable()`, `updateRoomVariable()` and `updateGlobalRoomVariable()`
+  take `string $value`. `patch*VariablesProfile()` maps and batch
+  `body.value` entries are sent as strings.
+- Wired writes validate values against `^-?\d+$` and throw
+  `InvalidArgumentException` before sending.
+
+Upgrading: pass `(string) $int` when writing and read `(int) $data->value` (or
+use bcmath) when reading.
+
 ## 1.0.2 - 2026-09-02
 
 - Laravel Boost support: ships `resources/boost/guidelines/core.blade.php` and a

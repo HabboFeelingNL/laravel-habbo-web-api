@@ -133,13 +133,13 @@ Add-on: Web API" furni (see the note at the top).
 $score = HabboAPI::roomVariable($roomId, 'user', 'score', 'users', $entityId, $readKey);
 
 // Create / replace / update / delete
-HabboAPI::setRoomVariable($roomId, 'user', 'score', 'users', $entityId, 10, $writeKey);
-HabboAPI::updateRoomVariable($roomId, 'user', 'score', 'users', $entityId, 11, $writeKey);
+HabboAPI::setRoomVariable($roomId, 'user', 'score', 'users', $entityId, '10', $writeKey);
+HabboAPI::updateRoomVariable($roomId, 'user', 'score', 'users', $entityId, '11', $writeKey);
 HabboAPI::deleteRoomVariable($roomId, 'user', 'score', 'users', $entityId, $writeKey);
 
 // Global room variables
 HabboAPI::globalRoomVariable($roomId, 'jackpot', $readKey);
-HabboAPI::updateGlobalRoomVariable($roomId, 'jackpot', 500, $writeKey);
+HabboAPI::updateGlobalRoomVariable($roomId, 'jackpot', '500', $writeKey);
 
 // Paged values, counts, bulk delete, batch, profiles
 HabboAPI::listRoomVariableValues($roomId, 'user', 'score', 'users', $readKey, ['page' => 1, 'size' => 50]);
@@ -148,11 +148,11 @@ HabboAPI::batchRoomVariable($roomId, 'user', 'score', $requests, $writeKey);
 HabboAPI::userVariablesProfile($roomId, 'users', $entityId, $readKey);
 ```
 
-**64-bit values.** Wired variable values are signed 64-bit integers. PHP's native
-`int` is 64-bit on any 64-bit build and `json_decode()` keeps whole numbers up to
-`PHP_INT_MAX` (the same ceiling), so values round-trip losslessly with no bigint
-library — unlike JavaScript. 32-bit PHP builds (where large values overflow to
-float) are not supported.
+**64-bit values.** Wired variable values are signed 64-bit integers that the API
+encodes as decimal strings (`"-42"`) to preserve precision. `WiredVariableData::$value`
+is a `string`, and every write takes string values — anything that isn't an integer
+string throws an `InvalidArgumentException` before the request is sent. Use
+`bcmath` / `brick/math` for arithmetic, or `(int) $variable->value` on 64-bit PHP.
 
 **Pagination.** `listRoomVariableValues()` takes `page` (1-based), `size`
 (default 50, max 100), `order_by` (`value` / `creation_time` / `update_time`) and

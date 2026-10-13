@@ -311,7 +311,7 @@ it('strips a leading api/public segment from get() paths', function () {
 
 it('attaches the room read key and hydrates a WiredVariableData', function () {
     Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response([
-        'value' => 7,
+        'value' => '7',
         'creation_time' => '2023-11-16T22:13:20Z',
         'update_time' => '2023-11-17T09:30:00Z',
     ])]);
@@ -319,7 +319,7 @@ it('attaches the room read key and hydrates a WiredVariableData', function () {
     $variable = app(HabboApi::class)->roomVariable(42, 'user', 'score', 'users', '7', 'read-key');
 
     expect($variable)->toBeInstanceOf(WiredVariableData::class)
-        ->and($variable->value)->toBe(7)
+        ->and($variable->value)->toBe('7')
         ->and($variable->creationTime)->toBeInstanceOf(CarbonImmutable::class);
 
     Http::assertSent(function ($request) {
@@ -329,36 +329,94 @@ it('attaches the room read key and hydrates a WiredVariableData', function () {
     });
 });
 
-it('attaches the room write key and value body when setting a wired variable', function () {
+it('hydrates a legacy numeric wired variable value as a string', function () {
     Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => 7])]);
 
-    app(HabboApi::class)->setRoomVariable(42, 'user', 'score', 'users', '7', 7, 'write-key');
+    expect(app(HabboApi::class)->roomVariable(42, 'user', 'score', 'users', '7', 'read-key')->value)->toBe('7');
+});
+
+it('attaches the room write key and value body when setting a wired variable', function () {
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => '7'])]);
+
+    app(HabboApi::class)->setRoomVariable(42, 'user', 'score', 'users', '7', '7', 'write-key');
 
     Http::assertSent(function ($request) {
         return $request->method() === 'PUT'
             && $request->hasHeader('X-Wired-Write-Key', 'write-key')
-            && $request['value'] === 7;
+            && $request['value'] === '7';
     });
 });
 
-it('hydrates wired variable values across the full signed 64-bit range', function (int $value) {
+it('hydrates wired variable values across the full signed 64-bit range', function (string $value) {
     Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => $value])]);
 
     $variable = app(HabboApi::class)->roomVariable(42, 'user', 'score', 'users', '7', 'read-key');
 
     expect($variable->value)->toBe($value);
 })->with([
-    'int64 max' => PHP_INT_MAX,
-    'large negative' => -9223372036854775807,
+    'int64 max' => '9223372036854775807',
+    'int64 min' => '-9223372036854775808',
 ]);
 
 it('sends a 64-bit wired variable value without losing precision', function () {
-    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => PHP_INT_MAX])]);
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => '-9223372036854775808'])]);
 
-    app(HabboApi::class)->setRoomVariable(42, 'user', 'score', 'users', '7', PHP_INT_MAX, 'write-key');
+    app(HabboApi::class)->updateGlobalRoomVariable(42, 'jackpot', '-9223372036854775808', 'write-key');
 
-    Http::assertSent(fn ($request) => $request['value'] === PHP_INT_MAX
-        && str_contains($request->body(), '9223372036854775807'));
+    Http::assertSent(fn ($request) => $request['value'] === '-9223372036854775808'
+        && str_contains($request->body(), '"-9223372036854775808"'));
+});
+
+it('rejects a non-integer wired variable value before sending', function (string $value) {
+    Http::fake();
+
+    expect(fn () => app(HabboApi::class)->setRoomVariable(42, 'user', 'score', 'users', '7', $value, 'write-key'))
+        ->toThrow(InvalidArgumentException::class);
+
+    Http::assertNothingSent();
+})->with(['decimal' => '1.5', 'text' => 'abc', 'empty' => '']);
+
+it('sends string and null values when patching a variables profile', function () {
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response([
+        'variables' => ['score' => ['value' => '10']],
+        'user' => ['id' => 1, 'name' => 'Cerbaro', 'unique_id' => 'hhus-1'],
+    ])]);
+
+    $profile = app(HabboApi::class)->patchUserVariablesProfile(42, 'users', '1', ['score' => '10', 'lives' => null], 'write-key');
+
+    expect($profile->variables['score']->value)->toBe('10')
+        ->and($profile->user->uniqueId)->toBe('hhus-1');
+
+    Http::assertSent(fn ($request) => $request['variables'] === ['score' => '10', 'lives' => null]);
+});
+
+it('rejects a non-integer value in a variables profile patch', function () {
+    Http::fake();
+
+    expect(fn () => app(HabboApi::class)->patchGlobalVariablesProfile(42, ['jackpot' => '1e3'], 'write-key'))
+        ->toThrow(InvalidArgumentException::class);
+
+    Http::assertNothingSent();
+});
+
+it('sends string batch values and hydrates batch result bodies as strings', function () {
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['results' => [
+        ['op_id' => 'a', 'status' => 200, 'body' => ['value' => '5']],
+        ['op_id' => 'b', 'status' => 204],
+        ['op_id' => 'c', 'status' => 404, 'error' => ['code' => 'not-found', 'message' => 'Not found']],
+    ]])]);
+
+    $results = app(HabboApi::class)->batchRoomVariable(42, 'user', 'score', [
+        ['op_id' => 'a', 'method' => 'PUT', 'path' => 'users/1', 'body' => ['value' => '5']],
+        ['op_id' => 'b', 'method' => 'DELETE', 'path' => 'users/2'],
+        ['op_id' => 'c', 'method' => 'GET', 'path' => 'users/3'],
+    ], 'write-key')->results;
+
+    expect($results[0]->body->value)->toBe('5')
+        ->and($results[1]->status)->toBe(204)
+        ->and($results[2]->error->code)->toBe('not-found');
+
+    Http::assertSent(fn ($request) => $request['requests'][0]['body']['value'] === '5');
 });
 
 it('reports a wired variable deletion as successful from a 204', function () {
@@ -400,7 +458,7 @@ it('round-trips an in-game furni id through furniId() and back', function (int $
 })->with([12345, 0, -777, 2147418112 + 42, -(2147418112 + 42)]);
 
 it('feeds furniId() output straight into a wired variable read', function () {
-    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => 1])]);
+    Http::fake(['www.habbo.com/api/public/rooms/*' => Http::response(['value' => '1'])]);
 
     ['kind' => $kind, 'id' => $id] = HabboApi::furniId(-(2147418112 + 42));
     app(HabboApi::class)->roomVariable(7, 'furni', 'score', $kind, (string) $id, 'read-key');

@@ -34,6 +34,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use InvalidArgumentException;
 use Spatie\LaravelData\DataCollection;
 
 /**
@@ -343,6 +344,11 @@ class HabboApi
     |   bulk deletes     10/min (burst 5)
     |   batch requests   30/min, plus a separate 500/min budget for batched writes
     |
+    | Values are signed 64-bit integers encoded as decimal strings (e.g. "-42")
+    | to preserve precision, both in responses and in request bodies. Writes
+    | reject anything else with an InvalidArgumentException before sending. Use
+    | bcmath/brick/math for arithmetic, or cast with (int) on 64-bit PHP.
+    |
     | The "/count" endpoints are cached server-side for 20s-600s depending on the
     | size of the count. This client does not throttle or cache for you — pace
     | calls from your own scheduler/queue, and cache profile/count reads yourself
@@ -375,10 +381,10 @@ class HabboApi
     /**
      * Create or replace a single user or furni wired variable value.
      */
-    public function setRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, int $value, string $writeKey): ?WiredVariableData
+    public function setRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, string $value, string $writeKey): ?WiredVariableData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->put($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $value]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->put($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $this->wiredValue($value)]),
             WiredVariableData::class,
         );
     }
@@ -386,10 +392,10 @@ class HabboApi
     /**
      * Update a single user or furni wired variable value.
      */
-    public function updateRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, int $value, string $writeKey): ?WiredVariableData
+    public function updateRoomVariable(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId, string $value, string $writeKey): ?WiredVariableData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->patch($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $value]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch($this->variablePath($roomId, $scope, $variableName, $targetKind, $entityId), ['value' => $this->wiredValue($value)]),
             WiredVariableData::class,
         );
     }
@@ -442,14 +448,15 @@ class HabboApi
     }
 
     /**
-     * Execute a batch (1-50) of operations against one wired variable.
+     * Execute a batch (1-50) of operations against one wired variable. Each
+     * `path` is relative to the variable, e.g. `users/123`.
      *
-     * @param  array<int, array<string, mixed>>  $requests
+     * @param  array<int, array{op_id?: string, method: 'GET'|'PUT'|'PATCH'|'DELETE', path: string, body?: array{value: string}}>  $requests
      */
     public function batchRoomVariable(int $roomId, string $scope, string $variableName, array $requests, string $writeKey): ?WiredBatchResultsData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->post("/rooms/{$roomId}/variables/{$scope}/{$variableName}/batch", ['requests' => array_values($requests)]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->post("/rooms/{$roomId}/variables/{$scope}/{$variableName}/batch", ['requests' => $this->wiredBatchRequests($requests)]),
             WiredBatchResultsData::class,
         );
     }
@@ -468,10 +475,10 @@ class HabboApi
     /**
      * Update a global room wired variable.
      */
-    public function updateGlobalRoomVariable(int $roomId, string $variableName, int $value, string $writeKey): ?WiredVariableData
+    public function updateGlobalRoomVariable(int $roomId, string $variableName, string $value, string $writeKey): ?WiredVariableData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables/global/{$variableName}", ['value' => $value]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables/global/{$variableName}", ['value' => $this->wiredValue($value)]),
             WiredVariableData::class,
         );
     }
@@ -510,12 +517,12 @@ class HabboApi
     /**
      * Patch a user, pet, or bot variables profile. A null value clears that variable.
      *
-     * @param  array<string, int|null>  $variables
+     * @param  array<string, string|null>  $variables
      */
     public function patchUserVariablesProfile(int $roomId, string $targetKind, string $entityId, array $variables, string $writeKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}", ['variables' => $variables]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/user/{$targetKind}/{$entityId}", ['variables' => $this->wiredVariables($variables)]),
             WiredVariablesProfileData::class,
         );
     }
@@ -543,12 +550,12 @@ class HabboApi
     /**
      * Patch a furni variables profile. A null value clears that variable.
      *
-     * @param  array<string, int|null>  $variables
+     * @param  array<string, string|null>  $variables
      */
     public function patchFurniVariablesProfile(int $roomId, string $targetKind, string $entityId, array $variables, string $writeKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/furni/{$targetKind}/{$entityId}", ['variables' => $variables]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/furni/{$targetKind}/{$entityId}", ['variables' => $this->wiredVariables($variables)]),
             WiredVariablesProfileData::class,
         );
     }
@@ -567,12 +574,12 @@ class HabboApi
     /**
      * Patch the global variables profile.
      *
-     * @param  array<string, int>  $variables
+     * @param  array<string, string>  $variables
      */
     public function patchGlobalVariablesProfile(int $roomId, array $variables, string $writeKey): ?WiredVariablesProfileData
     {
         return $this->object(
-            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/global", ['variables' => $variables]),
+            fn () => $this->wiredClient(writeKey: $writeKey)->patch("/rooms/{$roomId}/variables_profile/global", ['variables' => $this->wiredVariables($variables)]),
             WiredVariablesProfileData::class,
         );
     }
@@ -858,6 +865,39 @@ class HabboApi
         }
 
         return $client;
+    }
+
+    private function wiredValue(string $value): string
+    {
+        if (! preg_match('/^-?\d+$/', $value)) {
+            throw new InvalidArgumentException("Wired variable values must be integer strings, got [{$value}].");
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param  array<string, string|null>  $variables
+     * @return array<string, string|null>
+     */
+    private function wiredVariables(array $variables): array
+    {
+        return array_map(fn (?string $value): ?string => $value === null ? null : $this->wiredValue($value), $variables);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $requests
+     * @return array<int, array<string, mixed>>
+     */
+    private function wiredBatchRequests(array $requests): array
+    {
+        return array_values(array_map(function (array $request): array {
+            if (isset($request['body']['value'])) {
+                $request['body']['value'] = $this->wiredValue((string) $request['body']['value']);
+            }
+
+            return $request;
+        }, $requests));
     }
 
     private function variablePath(int $roomId, string $scope, string $variableName, string $targetKind, string $entityId): string

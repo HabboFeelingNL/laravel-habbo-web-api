@@ -23,7 +23,8 @@ on its own domain.
   original is untouched. Default hotel comes from `config('habbo-api.domain')`
   (`HABBO_API_DOMAIN`).
 - Wired Variables endpoints are beta and need per-room read/write keys from the room's
-  "Variable Global Add-on: Web API" furni. Origins endpoints are prefixed `origins*` and
+  "Variable Global Add-on: Web API" furni. Their values are int64 decimal **strings**
+  (`'10'`, not `10`). Origins endpoints are prefixed `origins*` and
   key off `uniquePlayerId`, not the regular Habbo unique id.
 
 @verbatim

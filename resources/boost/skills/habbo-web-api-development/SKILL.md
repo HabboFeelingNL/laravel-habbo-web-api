@@ -119,13 +119,13 @@ profile/count reads yourself.
 ```php
 // Per-entity variable: (roomId, scope, variableName, targetKind, entityId, key)
 $var = HabboAPI::roomVariable($roomId, 'user', 'score', 'users', $entityId, $readKey);           // ?WiredVariableData
-HabboAPI::setRoomVariable($roomId, 'user', 'score', 'users', $entityId, 10, $writeKey);           // ?WiredVariableData
-HabboAPI::updateRoomVariable($roomId, 'user', 'score', 'users', $entityId, 11, $writeKey);        // ?WiredVariableData
+HabboAPI::setRoomVariable($roomId, 'user', 'score', 'users', $entityId, '10', $writeKey);           // ?WiredVariableData
+HabboAPI::updateRoomVariable($roomId, 'user', 'score', 'users', $entityId, '11', $writeKey);        // ?WiredVariableData
 HabboAPI::deleteRoomVariable($roomId, 'user', 'score', 'users', $entityId, $writeKey);            // bool
 
 // Global room variables
 HabboAPI::globalRoomVariable($roomId, 'jackpot', $readKey);                                       // ?WiredVariableData
-HabboAPI::updateGlobalRoomVariable($roomId, 'jackpot', 500, $writeKey);                           // ?WiredVariableData
+HabboAPI::updateGlobalRoomVariable($roomId, 'jackpot', '500', $writeKey);                           // ?WiredVariableData
 
 // Paged values / counts / bulk delete / batch
 HabboAPI::listRoomVariableValues($roomId, 'user', 'score', 'users', $readKey, ['page' => 1, 'size' => 50]); // ?WiredPagedVariablesData
@@ -137,19 +137,21 @@ HabboAPI::roomVariables($roomId, $readKey);                                     
 // Variable profiles (all of an entity's variables at once)
 HabboAPI::userVariablesProfile($roomId, 'users', $entityId, $readKey);                            // ?WiredVariablesProfileData
 HabboAPI::userVariablesProfileByName($roomId, $readKey, name: 'whatwasit');
-HabboAPI::patchUserVariablesProfile($roomId, 'users', $entityId, ['score' => 10], $writeKey);
+HabboAPI::patchUserVariablesProfile($roomId, 'users', $entityId, ['score' => '10'], $writeKey);
 HabboAPI::deleteUserVariablesProfile($roomId, 'users', $entityId, $writeKey);                     // bool
 HabboAPI::furniVariablesProfile($roomId, $kind, $entityId, $readKey);
-HabboAPI::patchFurniVariablesProfile($roomId, $kind, $entityId, ['hits' => 1], $writeKey);
+HabboAPI::patchFurniVariablesProfile($roomId, $kind, $entityId, ['hits' => '1'], $writeKey);
 HabboAPI::globalVariablesProfile($roomId, $readKey);
-HabboAPI::patchGlobalVariablesProfile($roomId, ['jackpot' => 500], $writeKey);
+HabboAPI::patchGlobalVariablesProfile($roomId, ['jackpot' => '500'], $writeKey);
 ```
 
 - **Pagination** (`listRoomVariableValues`): `page` (1-based), `size` (default 50, max
   100), `order_by` (`value` / `creation_time` / `update_time`), `order_dir`
   (`asc` / `desc`).
-- **64-bit values**: signed 64-bit ints round-trip losslessly on 64-bit PHP builds. No
-  bigint library needed. 32-bit PHP builds are not supported.
+- **64-bit values**: values are signed 64-bit integers encoded as decimal **strings**
+  (`'10'`, `'-42'`). `WiredVariableData::$value` is a `string`, and all writes (including
+  profile patches and batch `body.value`) take strings. Non-integer strings throw
+  `InvalidArgumentException` before sending. Cast with `(int)` on 64-bit PHP or use bcmath.
 - **Rate limits** are enforced by the API per room over a 60s window (reads 300/min, list
   & profile reads 120/min, writes 120/min, bulk deletes 10/min, batch 30/min).
   `HabboRateLimitException` (`429`) exposes `retryAfter()`.

@@ -4,6 +4,7 @@ namespace HabboFeeling\HabboWebApi\Data\Wired;
 
 use Carbon\CarbonImmutable;
 use HabboFeeling\HabboWebApi\Data\Casts\HabboDateTimeCast;
+use HabboFeeling\HabboWebApi\Data\Casts\WiredValueCast;
 use Spatie\LaravelData\Attributes\MapInputName;
 use Spatie\LaravelData\Attributes\WithCast;
 use Spatie\LaravelData\Data;
@@ -13,7 +14,8 @@ use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 class WiredVariableData extends Data
 {
     public function __construct(
-        public int $value,
+        #[WithCast(WiredValueCast::class)]
+        public string $value,
         #[WithCast(HabboDateTimeCast::class)]
         public ?CarbonImmutable $creationTime = null,
         #[WithCast(HabboDateTimeCast::class)]
