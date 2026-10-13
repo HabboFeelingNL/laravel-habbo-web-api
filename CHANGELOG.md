@@ -18,6 +18,8 @@ values as signed 64-bit integers in decimal strings.
 - Wired writes validate values against `^-?\d+$` and throw
   `InvalidArgumentException` before sending.
 
+- Dev: allow `guzzlehttp/guzzle` ^8.0 alongside ^7.0.
+
 See [UPGRADE.md](UPGRADE.md) for the migration guide.
 
 ## 1.0.2 - 2026-09-02
