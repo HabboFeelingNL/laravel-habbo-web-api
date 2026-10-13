@@ -4,7 +4,7 @@ All notable changes to `laravel-habbo-web-api` will be documented in this file.
 
 ## Unreleased
 
-## 2.0.0 - unreleased
+## 2.0.0 - 2026-09-02
 
 **Breaking:** aligns Wired Variables with the updated API docs, which now encode
 values as signed 64-bit integers in decimal strings.
