@@ -18,8 +18,7 @@ values as signed 64-bit integers in decimal strings.
 - Wired writes validate values against `^-?\d+$` and throw
   `InvalidArgumentException` before sending.
 
-Upgrading: pass `(string) $int` when writing and read `(int) $data->value` (or
-use bcmath) when reading.
+See [UPGRADE.md](UPGRADE.md) for the migration guide.
 
 ## 1.0.2 - 2026-09-02
 
